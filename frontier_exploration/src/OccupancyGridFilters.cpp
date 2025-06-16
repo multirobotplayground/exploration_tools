@@ -96,7 +96,7 @@ void OccupancyGridFilter::inflate(nav_msgs::msg::OccupancyGrid& input_grid,
             nav_msgs::msg::OccupancyGrid& output_grid, 
             int radius_cells, 
             int value_to_inflate, 
-            const bool& copy_data = true) {
+            const bool& copy_data) {
     if(copy_data) {
         output_grid.data = input_grid.data;
         output_grid.info = input_grid.info;
