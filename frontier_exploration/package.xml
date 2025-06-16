@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>frontier_exploration</name>
+  <version>0.0.1</version>
+  <description>Frontier exploration utilities for multi-robot research in ROS 2.</description>
+  <maintainer email="ophien@example.com">ophien</maintainer>
+  <license>GPL-3.0-or-later</license>
+
+  <build_depend>ament_cmake</build_depend>
+  <build_depend>rosidl_default_generators</build_depend>
+  
+  <build_depend>rclcpp</build_depend>
+  <build_depend>std_msgs</build_depend>
+  <build_depend>geometry_msgs</build_depend>
+  <build_depend>nav_msgs</build_depend>
+  <build_depend>visualization_msgs</build_depend>
+  <build_depend>std_srvs</build_depend>
+  <build_depend>frontier_msgs</build_depend>
+
+  <exec_depend>rclcpp</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>visualization_msgs</exec_depend>
+  <exec_depend>std_srvs</exec_depend>
+  <exec_depend>rosidl_default_runtime</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
