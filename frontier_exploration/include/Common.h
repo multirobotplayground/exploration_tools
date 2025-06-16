@@ -1,0 +1,462 @@
+/*
+ * Noetic-Multi-Robot-Sandbox for multi-robot research using ROS 2
+ * Copyright (C) 2020 Alysson Ribeiro da Silva
+ * 
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ * 
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ * 
+ * You should have received 1 copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*/
+
+#ifndef COMMON_H
+#define COMMON_H
+
+#include <cstring>
+#include <stdio.h>
+#include <random>
+// ROS 2 message and TF2 includes
+#include "geometry_msgs/msg/pose.hpp"
+#include "nav_msgs/msg/occupancy_grid.hpp"
+#include "tf2/LinearMath/Vector3.h"
+#include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
+
+std::mt19937* randomglobal();
+
+/*
+ * For grid opperations
+ */
+struct Vec2i {
+	union {
+		int array[2];
+		struct {
+			union {
+				int x;
+				int width;
+			};
+			union {
+				int y;
+				int height;
+			};
+		};
+	};
+
+	static Vec2i Create(int x, int y) {
+		Vec2i result;
+		result.x = x;
+		result.y = y;
+		return result;
+	}
+
+	static Vec2i Create(int v) {
+		Vec2i result;
+		result.x = v;
+		result.y = v;
+		return result;
+	}
+
+	bool contains(int v) const {
+		return x == v || y == v;
+	}
+
+	bool contains(const Vec2i& v) const {
+		return contains(v.x) || contains(v.y);
+	}
+
+	inline void print() {
+		printf("[%d,%d]\n", x, y);
+	}
+
+	inline bool operator==(const Vec2i& v) const { return memcmp(this, &v, sizeof(Vec2i)) == 0; }
+	inline bool operator!=(const Vec2i& v) const { return memcmp(this, &v, sizeof(Vec2i)) != 0; }
+	inline Vec2i operator-()const { return Vec2i::Create(-x, -y); }
+	inline Vec2i& operator+=(const Vec2i& v) { x += v.x; y += v.y; return (*this); }
+	inline Vec2i& operator-=(const Vec2i& v) { x -= v.x; y -= v.y; return (*this); }
+	inline Vec2i& operator*=(const Vec2i& v) { x *= v.x; y *= v.y; return (*this); }
+	inline Vec2i& operator/=(const Vec2i& v) { x /= v.x; y /= v.y; return (*this); }
+	inline Vec2i& operator+=(const int& v) { x += v; y += v; return (*this); }
+	inline Vec2i& operator-=(const int& v) { x -= v; y -= v; return (*this); }
+	inline Vec2i& operator*=(const int& v) { x *= v; y *= v; return (*this); }
+	inline Vec2i& operator/=(const int& v) { x /= v; y /= v; return (*this); }
+	inline double norm(const Vec2i& other) {
+		int dx = this->x - other.x;
+		int dy = this->y - other.y;
+		return sqrt((dx * dx) + (dy * dy));
+	}
+
+};
+
+inline double Distance(const Vec2i& rA, const Vec2i& rB) {
+	int dx = rA.x - rB.x;
+	int dy = rA.y - rB.y;
+	return (dx * dx) + (dy * dy);
+}
+
+#define INLINE_OPERATION_IMPLEMENTATION_INT(TTYPE)\
+static inline TTYPE operator/( const TTYPE& vecA, const TTYPE& vecB ){ return (TTYPE(vecA)/=vecB); } \
+static inline TTYPE operator/( const TTYPE& vec , const int value ){ return (TTYPE(vec)/=value); } \
+static inline TTYPE operator/( const int value, const TTYPE& vec  ){ return (TTYPE::Create(value)/=vec); } \
+static inline TTYPE operator*( const TTYPE& vecA, const TTYPE& vecB ){ return (TTYPE(vecA)*=vecB); } \
+static inline TTYPE operator*( const TTYPE& vec , const int value ){ return (TTYPE(vec)*=value); } \
+static inline TTYPE operator*( const int value, const TTYPE& vec  ){ return (TTYPE::Create(value)*=vec); } \
+static inline TTYPE operator+( const TTYPE& vecA, const TTYPE& vecB ){ return (TTYPE(vecA)+=vecB); } \
+static inline TTYPE operator+( const TTYPE& vec , const int value ){ return (TTYPE(vec)+=value); } \
+static inline TTYPE operator+( const int value, const TTYPE& vec  ){ return (TTYPE::Create(value)+=vec); } \
+static inline TTYPE operator-( const TTYPE& vecA, const TTYPE& vecB ){ return (TTYPE(vecA)-=vecB); } \
+static inline TTYPE operator-( const TTYPE& vec , const int value ){ return (TTYPE(vec)-=value); } \
+static inline TTYPE operator-( const int value, const TTYPE& vec  ){ return (TTYPE::Create(value)-=vec); }
+
+INLINE_OPERATION_IMPLEMENTATION_INT(Vec2i)
+
+#if !defined(NDEBUG)
+      #define MATRIX_THROW_OUT_OF_BOUND_EXCEPTION
+#endif
+
+#if defined(MATRIX_THROW_OUT_OF_BOUND_EXCEPTION)
+
+template <typename T>
+class Matrix;
+
+template <typename _T>
+class Matrix_Proxy {
+    int width;
+    _T* ptr;
+    Matrix_Proxy(int width, _T* ptr) {
+        this->width = width;
+        this->ptr = ptr;
+    }
+    public:
+    _T& operator[](int x) {
+        if (x < 0 || x >= width)
+            throw std::overflow_error("column index is out of bounds.");
+        return this->ptr[x];
+    }
+    const _T& operator[](int x)const {
+        if (x < 0 || x >= width)
+            throw std::overflow_error("column index is out of bounds.");
+        return this->ptr[x];
+    }
+    friend class Matrix<_T>;
+};
+#endif
+
+/*
+ * For grid opperations
+ */
+template <typename T> class Matrix {
+	public:
+		T* array;
+		Vec2i size;
+
+	Matrix(int width, int height) : size(Vec2i::Create(0,0)) {
+		array = NULL;
+		setSize(Vec2i::Create(width, height));
+	}
+
+	Matrix(const Vec2i& size) : size(Vec2i::Create(0,0)) {
+		array = NULL;
+		setSize(size);
+	}
+
+	Matrix(const Matrix& m) : size(Vec2i::Create(0,0)) {
+		setSize(m.size);
+		memcpy(array, m.array, sizeof(T)*size.width*size.height);
+	}
+
+	void operator=(const Matrix& m) {
+		setSize(m.size);
+		memcpy(array, m.array, sizeof(T)*size.width*size.height);
+	}
+
+	inline void CopyRegion(std::vector<Vec2i>& rValidAreas,
+						   Matrix<T>& pOther, 
+						   const Vec2i& start, 
+						   const Vec2i& end) {
+		if(size != pOther.size) {
+			throw std::out_of_range("matrices need to be of the same size.");
+		}
+		if(start.x < 0 || start.x > size.width || end.x < 0 || end.x > size.width ||
+		   start.y < 0 || start.y > size.height || end.y < 0 || end.y > size.height) {
+			throw std::out_of_range("box is out of range.");
+		}
+		int index = 0;
+		int val = 0;
+
+		// should include both ends, thus using <=
+		for(int y = start.y; y < end.y; ++y) {
+			// this copy is being done this way to extract all 
+			// free positions that will be used for map fusion
+			// thus reducing the algorithmic complexity of the program
+			for(int x = start.x; x < end.x; ++x) {
+				index = y*size.width+x;
+				val = pOther.array[index];
+
+				// if val is a valid free path,
+				// them it should be added into the free
+				// paths list if it was not discovered 
+				// into the robot's map
+				if(val != 50 && array[index] == 50) {
+					rValidAreas.push_back(Vec2i::Create(x,y));
+				}
+
+				// the value will be updated only after checking
+				// its discovery on the robot's map
+				array[index] = val;
+			}
+			
+			// direct copy is efficient but does not allow fast 
+			// map fusion since there is no way to get the free positions
+			// directly from the memory block
+			//index = y*size.width+x;
+			//memcpy(&array[index], &pOther.array[index], sizeof(T)*(end.x-start.x));
+		}
+	}
+
+	inline bool CheckAny(const Vec2i& rStart, const Vec2i& rEnd, const int& rVal) {
+		Vec2i start = rStart;
+		Vec2i end = rEnd;
+		if(start.x < 0) start.x = 0;
+		if(start.x >= size.width) start.x = size.width - 1;
+		if(start.y < 0) start.y = 0;
+		if(start.y >= size.height) start.y = size.height - 1;
+		if(end.x < 0) end.x = 0;
+		if(end.x >= size.width) end.x = size.width - 1;
+		if(end.y < 0) end.y = 0;
+		if(end.y >= size.height) end.y = size.height - 1;
+
+		// this for should be end inclusive
+		// thus is the end.[xy] + 1
+		for(int y = start.y; y < end.y + 1; ++y) {
+			for(int x = start.x; x < end.x + 1; ++x) {
+				if(array[y*size.width+x] == rVal) return true;
+			}
+		}
+		return false;
+	}
+
+	#if defined(MATRIX_THROW_OUT_OF_BOUND_EXCEPTION)
+		Matrix_Proxy<T> operator[](int y) {
+			if (y < 0 || y >= size.height)
+				throw std::overflow_error("row index is out of bounds.");
+			return Matrix_Proxy<T>(size.width , &this->array[y * size.width]);
+		}
+		const Matrix_Proxy<T> operator[](int y)const {
+			if (y < 0 || y >= size.height)
+				throw std::overflow_error("row index is out of bounds.");
+			return Matrix_Proxy<T>(size.width, &this->array[y * size.width]);
+		}
+	#else
+		T* operator[](int y) {
+			return &this->array[y * size.width];
+		}
+		const T* operator[](int y)const {
+			return &this->array[y * size.width];
+		}
+	#endif
+
+	~Matrix() {
+		delete array;
+		array = nullptr;
+		this->size = Vec2i::Create(0);
+	}
+
+	void setSize(const Vec2i& size) {
+		if (this->size == size)
+			return;
+		if(size.width <= 0 || size.height <= 0) {
+			throw std::bad_alloc();
+		} 
+		delete array;
+		array = nullptr;
+		this->size = size;
+		array = new T[size.width * size.height];
+	}
+
+	bool isInBounds(const Vec2i& rCoord) {
+		if(rCoord.x < 0) return false;
+		if(rCoord.y < 0) return false;
+		if(rCoord.x >= size.width) return false;
+		if(rCoord.y >= size.height) return false;
+		return true;
+	} 
+
+	void clear(const T&v) {
+		int s = size.height * size.width;
+		for(int i=0;i<s;++i) {
+			array[i] = v;
+		}
+	}
+};
+
+inline void PrintIntMap(Matrix<int>& rInput) {
+    // print frontier maps for evaluation
+    for(int y = 0; y < rInput.size.height; ++y) {
+        for(int x = 0; x < rInput.size.width; ++x) {
+            if(rInput[y][x] == 100)
+                printf("%c", 251);
+			else if(rInput[y][x] == 50)
+				printf("?");
+			else
+				printf(".");
+        }
+        printf("\n");
+    }
+}
+
+inline void PrintCharMap(Matrix<char>& rInput) {
+    // print frontier maps for evaluation
+    for(int y = 0; y < rInput.size.height; ++y) {
+        for(int x = 0; x < rInput.size.width; ++x) {
+            printf("%c", rInput[y][x]);
+        }
+        printf("\n");
+    }
+}
+
+inline void PrintSelfMap(Matrix<int>& rInput, const Vec2i& rPos) {
+	Matrix<char> cmap(rInput.size);
+
+    // print frontier maps for evaluation
+    for(int y = 0; y < rInput.size.height; ++y) {
+        for(int x = 0; x < rInput.size.width; ++x) {
+            if(rInput[y][x] == 100)
+                cmap[y][x] = 251;
+			else if(rInput[y][x] == 50)
+				cmap[y][x] = '?';
+			else
+				cmap[y][x] = '.';
+        }
+    }
+
+	cmap[rPos.y][rPos.x] = 'R';
+
+	PrintCharMap(cmap);
+}
+
+inline void PrintIntPath(Matrix<int>& rInput, 
+						 std::list<Vec2i>& rPath, 
+						 const Vec2i& rStart, 
+						 const Vec2i& rEnd) {
+	Matrix<char> path_map(rInput.size);
+
+    // print frontier maps for evaluation
+    for(int y = 0; y < rInput.size.height; ++y) {
+        for(int x = 0; x < rInput.size.width; ++x) {
+            if(rInput[y][x] == 100)
+                path_map[y][x] = 251;
+			else if(rInput[y][x] == 50)
+				path_map[y][x] = '?';
+			else
+				path_map[y][x] = '.';
+        }
+    }
+
+	// mark path in the path_map
+	std::list<Vec2i>::iterator it = rPath.begin();
+	for(;it != rPath.end(); ++it) {
+		Vec2i p = (*it);
+		path_map[p.y][p.x] = '*';
+	}
+
+	path_map[rStart.y][rStart.x] = 'S';
+	path_map[rEnd.y][rEnd.x] = 'E';
+
+	// print full map
+	PrintCharMap(path_map);
+}
+
+/*
+ * Occupancy grid helpers
+ */
+inline void PoseToVector3(const geometry_msgs::msg::Pose& rInput, tf2::Vector3& rOut) {
+    rOut.setX(rInput.position.x);
+    rOut.setY(rInput.position.y);
+    rOut.setZ(rInput.position.z);
+    // tf2::Vector3 does not have setW, so this is omitted
+}
+
+inline void Vector3ToPose(const tf2::Vector3& rInput, geometry_msgs::msg::Pose& rOutPose) {
+    rOutPose.position.x = rInput.getX();
+    rOutPose.position.y = rInput.getY();
+    rOutPose.position.z = rInput.getZ();
+}
+
+// World to map (geometry_msgs::msg::Pose to Vec2i)
+inline void WorldToMap(const nav_msgs::msg::OccupancyGrid& occ, const geometry_msgs::msg::Pose& world, Vec2i& map) {
+    double res = occ.info.resolution;
+    map.x = static_cast<int>((world.position.x - occ.info.origin.position.x) / res);
+    map.y = static_cast<int>((world.position.y - occ.info.origin.position.y) / res);
+}
+
+// World to map (tf2::Vector3 to Vec2i)
+inline void WorldToMap(const nav_msgs::msg::OccupancyGrid& occ, const tf2::Vector3& world, Vec2i& map) {
+    double res = occ.info.resolution;
+    map.x = static_cast<int>((world.getX() - occ.info.origin.position.x) / res);
+    map.y = static_cast<int>((world.getY() - occ.info.origin.position.y) / res);
+}
+
+// Map to world (Vec2i to geometry_msgs::msg::Pose)
+inline void MapToWorld(const nav_msgs::msg::OccupancyGrid& occ, const Vec2i& map, geometry_msgs::msg::Pose& world) {
+    double res = occ.info.resolution;
+    double d_x = static_cast<double>(map.x);
+    double d_y = static_cast<double>(map.y);
+    world.position.x = occ.info.origin.position.x + (d_x * res) + (res / 2.0);
+    world.position.y = occ.info.origin.position.y + (d_y * res) + (res / 2.0);
+    world.position.z = 0.0;
+}
+
+// Map to world (Vec2i to tf2::Vector3)
+inline void MapToWorld(const nav_msgs::msg::OccupancyGrid& occ, const Vec2i& map, tf2::Vector3& world) {
+    double res = occ.info.resolution;
+    double d_x = static_cast<double>(map.x);
+    double d_y = static_cast<double>(map.y);
+    world.setX(occ.info.origin.position.x + (d_x * res) + (res / 2.0));
+    world.setY(occ.info.origin.position.y + (d_y * res) + (res / 2.0));
+    world.setZ(0.0);
+}
+
+inline double PeriodToFreqAndFreqToPeriod(const double& val) {
+	return 1.0 / val;
+}
+
+inline void ApplyMask(const int& rX, 
+                const int& rY, 
+                const int& rRadius,
+                std::vector<int8_t>& rArr,
+                const int& rVal,
+                const int& rWidth,
+                const int& rHeight,
+                const int8_t& occupancyThreshold = 90,
+                const bool& ignoreObstacles=false) {
+    int index;
+    int dx, dy;
+    int r_squared = rRadius * rRadius;
+    for(int y = rY - rRadius; y <= rY + rRadius; ++y) {
+        for(int x = rX - rRadius; x <= rX + rRadius; ++x) {
+            if(x >= rWidth || y >= rHeight ||x < 0 || y < 0) continue;
+            
+            index = y * rWidth + x;
+
+            // I use this condition to check if I should inflate or not obsacles
+            // this is useful to clear the space for planning near the robot's pose
+            if(ignoreObstacles == true && rArr[index] >= occupancyThreshold) continue;
+            
+            // check if y and x are inside the circle
+            // or if they satisfy the circle equation
+            dx = (x - rX);
+            dy = (y - rY);
+            dx *= dx;
+            dy *= dy;
+            if(dx + dy <= r_squared) rArr[index] = rVal;
+        }
+    }
+}
+
+#endif
