@@ -60,6 +60,15 @@ namespace sa {
             rPos.y < rInput.info.height;
     }
 
+    bool IsInBounds(const int& width, const int& height, Vec2i& rPos) {
+        RCLCPP_INFO(rclcpp::get_logger("SearchAlgorithms"), "Visiting child (%d,%d), dim: %d %d", rPos.x, rPos.y, width, height);
+
+        return rPos.x >= 0 &&
+            rPos.y >= 0 &&
+            rPos.x < width &&
+            rPos.y < height;
+    }
+
     bool CheckAny(nav_msgs::msg::OccupancyGrid& rInput, const Vec2i& rStart, const Vec2i& rEnd, const int& rVal) {
         Vec2i start = rStart;
         Vec2i end = rEnd;
@@ -100,72 +109,171 @@ namespace sa {
         }
     };
 
-    void ComputePathWavefront(
-        nav_msgs::msg::OccupancyGrid& rInput, 
-        const Vec2i& rStart, 
-        const Vec2i& rEnd, 
-        std::list<Vec2i>& rOutPath) {
-        // ensure the new path is clear to avoid
-        // finding something that does not exists
-        // in the frontier discovery
-        rOutPath.clear();
+    void ComputeValueMap(nav_msgs::msg::OccupancyGrid& rInput,
+                         nav_msgs::msg::OccupancyGrid& rOutput,
+                              std::vector<Vec2i>& rReached,
+                            const double& rMaxLidarRange) {
+        rOutput.data.assign(rInput.data.size(), -1);
+        rOutput.info = rInput.info;
+        rOutput.header = rInput.header;
+        double max_value = M_PI * rMaxLidarRange * rMaxLidarRange;
+        double max = 0.0;
+        for(size_t i = 0; i < rReached.size(); ++i) {
+            int index = rReached[i].y * rInput.info.width + rReached[i].x;
+            if(index < 0 || index >= rInput.data.size()) {
+                RCLCPP_ERROR(rclcpp::get_logger("SearchAlgorithms"), "Index out of bounds in ComputeValueMap: %d", index);
+                continue;
+            }
+            double value = WavefrontPropagationValue(rInput, rReached[i], rMaxLidarRange);
+            rOutput.data[index] = static_cast<int8_t>(value);
+            if(value > max) max = value;
+        }
+        for(size_t i = 0; i < rReached.size(); ++i) {
+            int index = rReached[i].y * rInput.info.width + rReached[i].x;
+            double val_to_norm = (double)(rOutput.data[index]);
+            double norm = val_to_norm / max;
+            double scaled = norm * 99.0 + 1.0; // scale to [54, 254] range
+            rOutput.data[index] = static_cast<int8_t>(scaled);
+        }
+    }
 
+    double WavefrontPropagationValue(nav_msgs::msg::OccupancyGrid& rInput,
+                                    const Vec2i& rStart,
+                                    const double& rMaxLidarRange) {
         // initialize distances and predecessors
         // using struct with all elements to optimize
         // cache hits
-        Matrix<MatrixEl> control(rInput.info.height, rInput.info.width);
-        control.clear(MatrixEl());
+        int width = rInput.info.width;
+        int height = rInput.info.height;
 
+        nav_msgs::msg::OccupancyGrid control;
+        control.info = rInput.info;
+        control.header = rInput.header;
+        control.data.assign(width * height, UNVISITED);
+        
         std::queue<Vec2i> to_visit;
         to_visit.push(Vec2i::Create(rStart.x, rStart.y));
-        control[rStart.y][rStart.x].visi = true;
+        control.data[rStart.y * width + rStart.x] = VISITED;
 
         Vec2i current;
         Vec2i children;
         bool found = false;
         int index;
         int val;
-        MatrixEl* curel;
+        double value = 0.0;
 
         while(to_visit.size() > 0) {
             current = to_visit.front();
             to_visit.pop();
 
-            // stop condition
-            if(current == rEnd) {
-                found = true;
-                break;
+            if(rMaxLidarRange > 0.0) {
+                double dx = (rStart.x - current.x) * rInput.info.resolution;
+                double dy = (rStart.y - current.y) * rInput.info.resolution;
+                double circle_test = dx * dx + dy * dy;
+                if(circle_test > rMaxLidarRange * rMaxLidarRange) continue; // skip if outside lidar range
             }
-
+            
             // iterate over children
             for(int x = 0; x < 3; ++x) {
                 for(int y = 0; y < 3; ++y) {
                     if(x == y) continue;
                     children = Vec2i::Create(current.x - 1 + x, current.y - 1 + y);
-                    // only add children that were not visited
-                    if(IsInBounds(rInput, children) && control[children.y][children.x].visi == false) {
-                        index = children.y*rInput.info.width+children.x;
-                        val = rInput.data[index];
-                        // check if the OCC is clean regarding data
-                        if(val >= 0 && val < 90) {
-                            curel = &(control[children.y][children.x]);
-                            curel->visi = true;
-                            curel->pred = Vec2i::Create(current.x, current.y);
-                            to_visit.push(Vec2i::Create(children.x, children.y));
-                       }
+                    index = children.y*control.info.width+children.x;
+                    if(children.x < 0 || children.y < 0 || children.x >= width || children.y >= height) continue;
+                    if(control.data[index] == VISITED) continue;
+                    val = rInput.data[index];
+                    // check if it is free space or unknown space, avoid obstacles
+                    if(val < 90) {
+                        to_visit.push(Vec2i::Create(children.x, children.y));
+                        control.data[index] = VISITED;
+                        // count for unknown cells from this point of view
+                        if(val == -1) value += 1.0;
                     }
                 }
             }
         }
+        return value * (rInput.info.resolution * rInput.info.resolution); // return area in meters squared
+    }
 
-        // compute output path from search
-        if(found == true) {
-            current = rEnd;
-            while(current != rStart) {
-                rOutPath.push_front(current);
-                current = control[current.y][current.x].pred;
+    void WavefrontPropagation(
+        nav_msgs::msg::OccupancyGrid& rInput,
+        nav_msgs::msg::OccupancyGrid& rControl,
+        const Vec2i& rStart,
+        std::vector<Vec2i>& rReached) {
+
+        rReached.clear();
+
+        // initialize distances and predecessors
+        // using struct with all elements to optimize
+        // cache hits
+        int width = rInput.info.width;
+        int height = rInput.info.height;
+
+        rControl.info = rInput.info;
+        rControl.header = rInput.header;
+        rControl.data.assign(width * height, UNVISITED);
+
+        std::queue<Vec2i> to_visit;
+        to_visit.push(Vec2i::Create(rStart.x, rStart.y));
+        rControl.data[rStart.y * width + rStart.x] = VISITED;
+
+        Vec2i current;
+        Vec2i children;
+        bool found = false;
+        int index;
+        int val;
+
+        while(to_visit.size() > 0) {
+            current = to_visit.front();
+            to_visit.pop();
+            
+            // iterate over children
+            for(int x = 0; x < 3; ++x) {
+                for(int y = 0; y < 3; ++y) {
+                    if(x == y) continue;
+                    children = Vec2i::Create(current.x - 1 + x, current.y - 1 + y);
+                    index = children.y*rControl.info.width+children.x;
+                    if(children.x < 0 || children.y < 0 || children.x >= width || children.y >= height) continue;
+                    if(rControl.data[index] == VISITED || rControl.data[index] == REACHED) continue;
+                    rControl.data[index] = VISITED;
+                    val = rInput.data[index];
+                    if(val >= 0 && val < 90) {
+                        rControl.data[index] = REACHED;
+                        rReached.push_back(children);
+                        to_visit.push(Vec2i::Create(children.x, children.y));
+                    }
+                }
             }
         }
+    }
+
+    double ComputeCellValue(nav_msgs::msg::OccupancyGrid& occ, Vec2i& centroid, const double& lidarRange) {
+        double range_squared = lidarRange * lidarRange;
+        int range_in_cells = static_cast<int>(lidarRange / occ.info.resolution);
+        Vec2i min = Vec2i::Create(centroid.x - range_in_cells, centroid.y - range_in_cells);
+        Vec2i max = Vec2i::Create(centroid.x + range_in_cells, centroid.y + range_in_cells);
+        min.x = std::max(0, min.x);
+        min.y = std::max(0, min.y);
+        max.x = std::min(max.x, static_cast<int>(occ.info.width));
+        max.y = std::min(max.y, static_cast<int>(occ.info.height));
+        int count = 0;
+        for (int x = min.x; x < max.x; ++x) {
+            for (int y = min.y; y < max.y; ++y) {
+                double dx = (centroid.x - x) * occ.info.resolution;
+                double dy = (centroid.y - y) * occ.info.resolution;
+                double circle_test = dx * dx + dy * dy;
+                if (circle_test <= range_squared) {
+                    int index = y * occ.info.width + x;
+                    if (occ.data[index] == -1) {
+                        count++;
+                    }
+                }
+            }
+        }
+        double cell_area = occ.info.resolution * occ.info.resolution;
+        double total_area_value = static_cast<double>(count) * cell_area;
+        // RCLCPP_INFO(this->get_logger(), "Cells: %d area to uncover in meters squared: %f", count, total_area_value);
+        return total_area_value;
     }
 
     void ComputePath(
@@ -261,32 +369,30 @@ namespace sa {
 
     void ComputeFrontiers(nav_msgs::msg::OccupancyGrid& rInput, 
                           nav_msgs::msg::OccupancyGrid& rOutput, 
+                          std::vector<Vec2i>& rReached,
                           std::vector<Vec2i>& rFrontiers) {
         rFrontiers.clear();                            
         InitOccFrom(rInput, rOutput);
         Vec2i start;
         Vec2i end;
         int index;
-        for(int y = 0; y < rInput.info.height; ++y) {
-            for(int x = 0; x < rInput.info.width; ++x) {
-                start.x = x - 1; start.y = y - 1;
-                end.x   = x + 1; end.y   = y + 1;
-
-                // only consider frontiers that are reachable
-                index = y * rInput.info.width + x;
-                if(rInput.data[index] >= 0 
+        for(size_t i = 0; i < rReached.size(); ++i) {
+            start.x = rReached[i].x - 1; start.y = rReached[i].y - 1;
+            end.x   = rReached[i].x + 1; end.y   = rReached[i].y + 1;
+            index = rReached[i].y * rInput.info.width + rReached[i].x;
+            if(rInput.data[index] >= 0 
                    && rInput.data[index] < 50 
                    && CheckAny(rInput, start, end, -1)) {
-                    rOutput.data[index] = 100;
-                    rFrontiers.push_back(Vec2i::Create(x,y));
-                }
-            }
+               rOutput.data[index] = 100;
+               rFrontiers.push_back(Vec2i::Create(rReached[i].x, rReached[i].y));
+           }
         }
     }
 
     void ComputeClusters(nav_msgs::msg::OccupancyGrid& rFrontiersMap, 
                         std::vector<Vec2i>& rFrontiers, 
-                        std::vector<std::vector<Vec2i>>& rOutClusters) {
+                        std::vector<std::vector<Vec2i>>& rOutClusters,
+                        const int& rMinClusterSize) {
         Matrix<int> visited(rFrontiersMap.info.width, rFrontiersMap.info.height);
         visited.clear(0);
         rOutClusters.clear();
@@ -321,7 +427,7 @@ namespace sa {
 
                 // after the flooding search
                 // append clusters to clusters list
-                if(cluster.size() > 0) {
+                if(cluster.size() > rMinClusterSize) {
                     rOutClusters.push_back(cluster);
                 }
             }

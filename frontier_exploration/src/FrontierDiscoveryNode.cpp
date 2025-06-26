@@ -19,23 +19,30 @@
 #include "FrontierDiscoveryNode.h"
 #include "std_srvs/srv/trigger.hpp"
 #include <algorithm>
+#include <math.h>
 
 FrontierDiscoveryNode::FrontierDiscoveryNode() : rclcpp::Node("frontier_discovery_node") {
     // Declare and get parameters
     this->declare_parameter<int>("id", 1);
-    this->declare_parameter<double>("max_lidar_range", 10.0);
+    this->declare_parameter<double>("max_lidar_range", 5.0);
     this->declare_parameter<double>("rate", 2.0);
     this->declare_parameter<int>("queue_size", 2);
+    this->declare_parameter<int>("aClusterDetectionMin", 5);
     this->get_parameter("id", aId);
     this->get_parameter("max_lidar_range", aMaxLidarRange);
     this->get_parameter("rate", aRate);
     this->get_parameter("queue_size", aQueueSize);
+    this->get_parameter("aClusterDetectionMin", aClusterDetectionMin);
     aNamespace = this->get_namespace();
 
     // Publishers
     aClusterMarkerPub = this->create_publisher<visualization_msgs::msg::Marker>(aNamespace + "/frontier_discovery/frontiers_clusters_markers", aQueueSize);
     aFrontiersMapPub = this->create_publisher<nav_msgs::msg::OccupancyGrid>(aNamespace + "/frontier_discovery/frontiers", aQueueSize);
     aFrontiersClustersPub = this->create_publisher<frontier_msgs::msg::Frontiers>(aNamespace + "/frontier_discovery/frontiers_clusters", aQueueSize);
+    aReachabilityMapPub = this->create_publisher<nav_msgs::msg::OccupancyGrid>(aNamespace + "/frontier_discovery/reachability_map", aQueueSize);
+    aCostMapPub = this->create_publisher<nav_msgs::msg::OccupancyGrid>(aNamespace + "/frontier_discovery/cost_map", aQueueSize);
+    aValueMapPub = this->create_publisher<nav_msgs::msg::OccupancyGrid>(aNamespace + "/frontier_discovery/value_map", aQueueSize);
+    aUtilityMapPub = this->create_publisher<nav_msgs::msg::OccupancyGrid>(aNamespace + "/frontier_discovery/utility_map", aQueueSize);
 
     // Subscriptions
     aSubscribers.push_back(
@@ -51,7 +58,11 @@ FrontierDiscoveryNode::FrontierDiscoveryNode() : rclcpp::Node("frontier_discover
             std::bind(&FrontierDiscoveryNode::estimate_pose_callback, this, std::placeholders::_1)));
     
     // Service
-    aComputeService = this->create_service<std_srvs::srv::Trigger>(
+    aComputeServiceClusters = this->create_service<frontier_msgs::srv::Frontiers>(
+        aNamespace + "/frontier_clusters_discovery/compute",
+        std::bind(&FrontierDiscoveryNode::compute_service_clusters_callback, this, std::placeholders::_1, std::placeholders::_2));
+
+    aComputeServiceUtilityMap = this->create_service<std_srvs::srv::Trigger>(
         aNamespace + "/frontier_discovery/compute",
         std::bind(&FrontierDiscoveryNode::compute_service_callback, this, std::placeholders::_1, std::placeholders::_2));
 
@@ -78,28 +89,36 @@ void FrontierDiscoveryNode::estimate_pose_callback(const geometry_msgs::msg::Pos
     aHasPose = true;
 }
 
-void FrontierDiscoveryNode::compute_service_callback(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
-                                                    std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
-    (void)request;
+void FrontierDiscoveryNode::compute_service_clusters_callback(const std::shared_ptr<frontier_msgs::srv::Frontiers::Request> request,
+                                                    std::shared_ptr<frontier_msgs::srv::Frontiers::Response> response) {
     RCLCPP_INFO(this->get_logger(), "Service request received");
     
     // Directly compute frontiers here (was previously in update/PROCESSING)
     if (!aReceivedCSpace || !aHasPose) {
-        response->success = false;
-        response->message = "CSpace or pose not received yet.";
         return;
     }
 
-    WorldToMap(aOcc, aWorldPos, aPos);
-    sa::ComputeFrontiers(aOcc, aFrontiersMap, aFrontiers);
-    sa::ComputeClusters(aFrontiersMap, aFrontiers, aClusters);
+    response->success = false;
+    nav_msgs::msg::OccupancyGrid aOccCopy;
+    aOccCopy.data = aOcc.data;
+    aOccCopy.info = aOcc.info;
+    aOccCopy.header = aOcc.header;
 
-    aFilteredClusters.clear();
-    for (auto& cluster : aClusters) {
-        if (cluster.size() > aClusterDetectionMin) aFilteredClusters.push_back(cluster);
+    WorldToMap(aOccCopy, aWorldPos, aPos);
+    if(!sa::IsInBounds(aOccCopy, aPos)) {
+        RCLCPP_INFO(this->get_logger(), "Robot position is out of bounds waiting for Configuration Space Updates.");
+        return;
     }
 
-    sa::ComputeClusterCenterOfMass(aPos, aFilteredClusters, aCentroids);
+    nav_msgs::msg::OccupancyGrid reachability_map;
+    std::vector<Vec2i> aReached;
+    sa::WavefrontPropagation(aOccCopy, reachability_map, aPos, aReached);
+    sa::ComputeFrontiers(aOccCopy, aFrontiersMap, aReached, aFrontiers);
+    sa::ComputeClusters(aFrontiersMap, aFrontiers, aClusters, aClusterDetectionMin);
+    sa::ComputeClusterCenterOfMass(aPos, aClusters, aCentroids);
+
+    aReachabilityMapPub->publish(reachability_map);
+
     reset_frontier_msg(aFrontiersMsg);
 
     if (aCentroids.size() > 0) {
@@ -108,7 +127,7 @@ void FrontierDiscoveryNode::compute_service_callback(const std::shared_ptr<std_s
         RCLCPP_INFO(this->get_logger(), "%ld available frontier.", aCentroids.size());
         for (size_t i = 0; i < aCentroids.size(); ++i) {
             tf2::Vector3 temp_world;
-            MapToWorld(aOcc, aCentroids[i], temp_world);
+            MapToWorld(aOccCopy, aCentroids[i], temp_world);
             geometry_msgs::msg::Point p;
             geometry_msgs::msg::Pose po;
             p.z = 0.25;
@@ -121,14 +140,64 @@ void FrontierDiscoveryNode::compute_service_callback(const std::shared_ptr<std_s
             RCLCPP_INFO(this->get_logger(), "\t[%.2f %.2f]", temp_world.getX(), temp_world.getY());
         }
         aFrontiersMsg.centroids = aPoseArrMsg;
+        response->centroids = aPoseArrMsg;
+        response->success = true;
         aClusterMarkerPub->publish(aClusterMarkerMsg);
         aFrontiersMapPub->publish(aFrontiersMap);
+        aFrontiersClustersPub->publish(aFrontiersMsg);
         aSeq += 1;
     }
+}
 
-    aFrontiersClustersPub->publish(aFrontiersMsg);
+void FrontierDiscoveryNode::compute_service_callback(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+                                           std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
+    RCLCPP_INFO(this->get_logger(), "Service request received for computing clusters");
+    response->success = false;
+
+    // Directly compute frontiers here (was previously in update/PROCESSING)
+    if (!aReceivedCSpace || !aHasPose) {
+        response->message = "Can not compute clusters.";
+        return;
+    }
+
+    nav_msgs::msg::OccupancyGrid aOccCopy;
+    aOccCopy.data = aOcc.data;
+    aOccCopy.info = aOcc.info;
+    aOccCopy.header = aOcc.header;
+
+    WorldToMap(aOccCopy, aWorldPos, aPos);
+    if(!sa::IsInBounds(aOccCopy, aPos)) {
+        RCLCPP_INFO(this->get_logger(), "Robot position is out of bounds waiting for Configuration Space Updates.");
+        return;
+    }
+
+    nav_msgs::msg::OccupancyGrid reachability_map;
+    std::vector<Vec2i> reached;
+    sa::WavefrontPropagation(aOccCopy, reachability_map, aPos, reached);   
+
+    // it seems that this is doing deep copy of the field from the occ, however I prefeer doing it explicitly
+    nav_msgs::msg::OccupancyGrid utility_map;
+    nav_msgs::msg::OccupancyGrid cost_map; 
+    nav_msgs::msg::OccupancyGrid value_map; 
+
+    utility_map.data = aOccCopy.data;
+    utility_map.info = aOccCopy.info;
+    utility_map.header = aOccCopy.header;
+
+    cost_map.data = aOccCopy.data;
+    cost_map.info = aOccCopy.info;
+    cost_map.header = aOccCopy.header;
+
+    value_map.data = aOccCopy.data;
+    value_map.info = aOccCopy.info;
+    value_map.header = aOccCopy.header;
+
+    sa::ComputeValueMap(aOccCopy, value_map, reached, aMaxLidarRange);
+
+    aValueMapPub->publish(value_map);
+    
     response->success = true;
-    response->message = "Frontier discovery completed.";
+    response->message = "Clusters computed successfully.";
 }
 
 void FrontierDiscoveryNode::create_marker(visualization_msgs::msg::Marker& input, const std::string& ns, int id, int seq) {
@@ -184,35 +253,6 @@ void FrontierDiscoveryNode::reset_frontier_msg(frontier_msgs::msg::Frontiers& ms
     msg.highest_cost = -1.0;
     msg.highest_value = -1.0;
     msg.highest_utility = -1.0;
-}
-
-double FrontierDiscoveryNode::compute_centroid_value(nav_msgs::msg::OccupancyGrid& occ, Vec2i& centroid, const double& lidarRange) {
-    double range_squared = lidarRange * lidarRange;
-    int range_in_cells = static_cast<int>(lidarRange / occ.info.resolution);
-    Vec2i min = Vec2i::Create(centroid.x - range_in_cells, centroid.y - range_in_cells);
-    Vec2i max = Vec2i::Create(centroid.x + range_in_cells, centroid.y + range_in_cells);
-    min.x = std::max(0, min.x);
-    min.y = std::max(0, min.y);
-    max.x = std::min(max.x, static_cast<int>(occ.info.width));
-    max.y = std::min(max.y, static_cast<int>(occ.info.height));
-    int count = 0;
-    for (int x = min.x; x < max.x; ++x) {
-        for (int y = min.y; y < max.y; ++y) {
-            double dx = (centroid.x - x) * occ.info.resolution;
-            double dy = (centroid.y - y) * occ.info.resolution;
-            double circle_test = dx * dx + dy * dy;
-            if (circle_test <= range_squared) {
-                int index = y * occ.info.width + x;
-                if (occ.data[index] == -1) {
-                    count++;
-                }
-            }
-        }
-    }
-    double cell_area = occ.info.resolution * occ.info.resolution;
-    double total_area_value = static_cast<double>(count) * cell_area;
-    RCLCPP_INFO(this->get_logger(), "Cells: %d area to uncover in meters squared: %f", count, total_area_value);
-    return total_area_value;
 }
 
 void FrontierDiscoveryNode::update() {

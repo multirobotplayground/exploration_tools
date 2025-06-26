@@ -22,7 +22,7 @@ OccupancyGridFilter::OccupancyGridFilter() : Node("occupancy_grid_filter_node") 
     // Constructor implementation
     RCLCPP_INFO(get_logger(), "OccupancyGridFilter node initialized.");
 
-    declare_parameter<double>("obstacle_inflation_radius_meters", 0.6);
+    declare_parameter<double>("obstacle_inflation_radius_meters", 0.0);
     declare_parameter<double>("free_inflation_radius_meters", 0.5);
     declare_parameter<int>("update_frequency_hz", 10);
     declare_parameter<int>("queue_size", 10);
@@ -107,13 +107,17 @@ void OccupancyGridFilter::inflate(nav_msgs::msg::OccupancyGrid& input_grid,
         if (input_grid.data[i] >= value_to_inflate) {  // If the cell is occupied
             int x = i % input_grid.info.width;
             int y = i / input_grid.info.width;
-            for (int dx = -radius_cells; dx <= radius_cells; ++dx) {
-                for (int dy = -radius_cells; dy <= radius_cells; ++dy) {
-                    if (dx * dx + dy * dy <= radius_cells * radius_cells) {
-                        int nx = x + dx;
-                        int ny = y + dy;
-                        if (nx >= 0 && nx < output_grid.info.width && ny >= 0 && ny < output_grid.info.height) {
-                            output_grid.data[ny * output_grid.info.width + nx] = value_to_inflate;
+            if(radius_cells <= 0.0) {
+                output_grid.data[y * output_grid.info.width + x] = value_to_inflate;
+            } else {
+                for (int dx = -radius_cells; dx <= radius_cells; ++dx) {
+                    for (int dy = -radius_cells; dy <= radius_cells; ++dy) {
+                        if (dx * dx + dy * dy <= radius_cells * radius_cells) {
+                            int nx = x + dx;
+                            int ny = y + dy;
+                            if (nx >= 0 && nx < output_grid.info.width && ny >= 0 && ny < output_grid.info.height) {
+                                output_grid.data[ny * output_grid.info.width + nx] = value_to_inflate;
+                            }
                         }
                     }
                 }

@@ -35,6 +35,8 @@
 #include "visualization_msgs/msg/marker_array.hpp"
 #include "std_srvs/srv/trigger.hpp"
 #include "frontier_msgs/msg/frontiers.hpp"
+#include "frontier_msgs/srv/frontiers.hpp"
+#include "nav_msgs/msg/occupancy_grid.h"
 
 /*
  * Helpers
@@ -58,8 +60,10 @@ private:
     void set_pose_arr(geometry_msgs::msg::PoseArray& arr, int seq);
     void reset_frontier_msg(frontier_msgs::msg::Frontiers& msg);
     double compute_centroid_value(nav_msgs::msg::OccupancyGrid& occ, Vec2i& centroid, const double& lidarRange);
+    void compute_service_clusters_callback(const std::shared_ptr<frontier_msgs::srv::Frontiers::Request> request,
+                                 std::shared_ptr<frontier_msgs::srv::Frontiers::Response> response);
     void compute_service_callback(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
-                                 std::shared_ptr<std_srvs::srv::Trigger::Response> response);
+                                           std::shared_ptr<std_srvs::srv::Trigger::Response> response);                                 
 
     // Control variables
     int aQueueSize;
@@ -83,9 +87,14 @@ private:
     rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr aClusterMarkerPub;
     rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr aFrontiersMapPub;
     rclcpp::Publisher<frontier_msgs::msg::Frontiers>::SharedPtr aFrontiersClustersPub;
+    rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr aReachabilityMapPub;
+    rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr aCostMapPub;
+    rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr aValueMapPub;
+    rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr aUtilityMapPub;
 
     // Service for compute trigger
-    rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr aComputeService;
+    rclcpp::Service<frontier_msgs::srv::Frontiers>::SharedPtr aComputeServiceClusters;
+    rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr aComputeServiceUtilityMap;
 
     // Messages
     geometry_msgs::msg::PoseArray aPoseArrMsg;

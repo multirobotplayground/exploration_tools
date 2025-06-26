@@ -1,10 +1,6 @@
 cmake_minimum_required(VERSION 3.8)
 project(frontier_msgs)
 
-if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-  add_compile_options(-Wall -Wextra -Wpedantic)
-endif()
-
 # find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
@@ -24,6 +20,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/Frontiers.msg"
   "msg/MockPackage.msg"
   "msg/Rendezvous.msg"
+  "srv/Frontiers.srv"
   DEPENDENCIES std_msgs geometry_msgs sensor_msgs nav_msgs
 )
 
