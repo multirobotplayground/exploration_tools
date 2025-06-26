@@ -30,25 +30,42 @@
 #include "nav_msgs/msg/occupancy_grid.hpp"
 #include "Common.h"
 
+#define REACHED 2
+#define VISITED 1
+#define UNVISITED -1
+
 namespace sa {
     void InitOccFrom(nav_msgs::msg::OccupancyGrid& rInput, nav_msgs::msg::OccupancyGrid& rOutput);
     bool IsInBounds(nav_msgs::msg::OccupancyGrid& rInput, Vec2i& rPos);
+    bool IsInBounds(const int& width, const int& height, Vec2i& rPos);
     bool CheckAny(nav_msgs::msg::OccupancyGrid& rInput, const Vec2i& rStart, const Vec2i& rEnd, const int& rVal);
     void ComputePath(nav_msgs::msg::OccupancyGrid& rOcc, 
                      const Vec2i& rStart, 
                      const Vec2i& rEnd, 
                      std::list<Vec2i>& rOutPath);
-    void ComputePathWavefront(
-        nav_msgs::msg::OccupancyGrid& rInput, 
-        const Vec2i& rStart, 
-        const Vec2i& rEnd, 
-        std::list<Vec2i>& rOutPath);
+    void ComputeValueMap(nav_msgs::msg::OccupancyGrid& rInput,
+                            nav_msgs::msg::OccupancyGrid& rOutput,
+                              std::vector<Vec2i>& rReached,
+                            const double& rMaxLidarRange);
+    double WavefrontPropagationValue(nav_msgs::msg::OccupancyGrid& rInput,
+                                const Vec2i& rStart,
+                            const double& rMaxLidarRange);
+    void WavefrontPropagation(
+        nav_msgs::msg::OccupancyGrid& rInput,
+        nav_msgs::msg::OccupancyGrid& rControl,
+        const Vec2i& rStart,
+        std::vector<Vec2i>& rReached);
+    double ComputeCellValue(nav_msgs::msg::OccupancyGrid& occ, Vec2i& centroid, const double& lidarRange);
+    void WavefrontFilter(nav_msgs::msg::OccupancyGrid& rFrontiersMap, 
+                         std::vector<Vec2i>& rFilteredFrontiers);
     void ComputeFrontiers(nav_msgs::msg::OccupancyGrid& rInput,  
-                          nav_msgs::msg::OccupancyGrid& rOutput, 
+                          nav_msgs::msg::OccupancyGrid& rOutput,
+                          std::vector<Vec2i>& rReached,
                           std::vector<Vec2i>& rFrontiers);
     void ComputeClusters(nav_msgs::msg::OccupancyGrid& rFrontiersMap, 
                          std::vector<Vec2i>& rFrontiers, 
-                         std::vector<std::vector<Vec2i>>& rOutClusters);
+                         std::vector<std::vector<Vec2i>>& rOutClusters,
+                         const int& rMinClusterSize);
     Vec2i ClosestFrontierCluster(const Vec2i& rPos, std::vector<Vec2i>& rCluster);
     Vec2i MedianFrontierCluster(const Vec2i& rPos, std::vector<Vec2i>& rCluster);
     void ComputeCentroids(const Vec2i& rPos, 
