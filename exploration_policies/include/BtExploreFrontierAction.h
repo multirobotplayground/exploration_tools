@@ -38,7 +38,7 @@
 #include "frontier_msgs/srv/frontiers.hpp"
 #include "behaviortree_cpp/behavior_tree.h"
 #include "behaviortree_cpp/bt_factory.h"
-#include "FrontierExplorationNode.h"
+#include "BtFrontierExplorationDemoNode.h"
 #include "rclcpp_action/rclcpp_action.hpp"
 #include "nav2_msgs/action/navigate_to_pose.hpp"
 

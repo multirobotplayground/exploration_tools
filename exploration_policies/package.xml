@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <package format="3">
-  <name>frontier_exploration</name>
+  <name>exploration_policies</name>
   <version>0.0.1</version>
   <description>Frontier exploration utilities for multi-robot research in ROS 2.</description>
   <maintainer email="ophien@example.com">ophien</maintainer>

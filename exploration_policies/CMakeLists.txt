@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.8)
-project(frontier_exploration)
+project(exploration_policies)
 
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
@@ -19,7 +19,7 @@ include_directories(include)
 
 add_library(${PROJECT_NAME}_lib
   src/SearchAlgorithms.cpp
-  src/ExploreFrontierAction.cpp
+  src/BtExploreFrontierAction.cpp
 )
 
 target_link_libraries(${PROJECT_NAME}_lib)
@@ -38,9 +38,9 @@ ament_target_dependencies(${PROJECT_NAME}_lib
   nav2_msgs
 )
 
-add_executable(frontier_exploration_node src/FrontierExplorationNode.cpp src/SearchAlgorithms.cpp)
-target_link_libraries(frontier_exploration_node ${PROJECT_NAME}_lib)
-ament_target_dependencies(frontier_exploration_node
+add_executable(bt_frontier_exploration_demo_node src/BtFrontierExplorationDemoNode.cpp src/SearchAlgorithms.cpp)
+target_link_libraries(bt_frontier_exploration_demo_node ${PROJECT_NAME}_lib)
+ament_target_dependencies(bt_frontier_exploration_demo_node
   rclcpp
   std_msgs
   geometry_msgs
@@ -88,7 +88,23 @@ ament_target_dependencies(occupancy_grid_filter_node
   nav2_msgs
 )
 
-install(TARGETS frontier_exploration_node occupancy_grid_filter_node frontier_discovery_node
+add_executable(yamauchi_1999_node src/Yamauchi1999Node.cpp)
+target_link_libraries(yamauchi_1999_node ${PROJECT_NAME}_lib)
+ament_target_dependencies(yamauchi_1999_node  
+  rclcpp
+  std_msgs
+  geometry_msgs
+  nav_msgs
+  visualization_msgs
+  std_srvs
+  tf2
+  tf2_geometry_msgs
+  sensor_msgs
+  frontier_msgs
+  nav2_msgs
+)
+
+install(TARGETS yamauchi_1999_node bt_frontier_exploration_demo_node occupancy_grid_filter_node frontier_discovery_node
   DESTINATION lib/${PROJECT_NAME}
 )
 
