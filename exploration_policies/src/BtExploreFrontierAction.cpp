@@ -18,7 +18,7 @@
 
 #include "FrontierDiscoveryNode.h"
 #include "std_srvs/srv/trigger.hpp"
-#include "ExploreFrontierAction.h"
+#include "BtExploreFrontierAction.h"
 #include "rclcpp_action/rclcpp_action.hpp"
 #include "nav2_msgs/action/navigate_to_pose.hpp"
 #include <algorithm>

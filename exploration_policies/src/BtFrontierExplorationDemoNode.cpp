@@ -16,10 +16,10 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include "FrontierExplorationNode.h"
+#include "BtFrontierExplorationDemoNode.h"
 #include "behaviortree_cpp/bt_factory.h"
 #include "behaviortree_cpp/behavior_tree.h"
-#include "ExploreFrontierAction.h"
+#include "BtExploreFrontierAction.h"
 
 FrontierExplorationNode::FrontierExplorationNode(): Node("frontier_exploration_node") {
     // Declare and get parameters
